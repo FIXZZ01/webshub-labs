@@ -1,63 +1,85 @@
 /**
- * /api/dns — DNS lookup via DoH (Cloudflare, Google, NextDNS)
- * Real DNS resolution from multiple resolvers.
+ * /api/portscan — TCP port scanner via node:net
+ * Real TCP connections, no simulation.
  */
 
-const RESOLVERS = [
-  { name: 'cloudflare', url: 'https://cloudflare-dns.com/dns-query', label: 'Cloudflare 1.1.1.1' },
-  { name: 'google', url: 'https://dns.google/resolve', label: 'Google 8.8.8.8' },
-  { name: 'nextdns', url: 'https://dns.nextdns.io/dns-query', label: 'NextDNS' },
-  { name: 'quad9', url: 'https://dns.quad9.net:5053/dns-query', label: 'Quad9 9.9.9.9' }
+import net from 'node:net';
+
+export const config = { maxDuration: 30 };
+
+const COMMON_PORTS = [
+  21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
+  993, 995, 1433, 1521, 3306, 3389, 5432, 5900,
+  6379, 8080, 8443, 9000, 9200, 27017
 ];
 
-const RECORD_TYPES = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'CAA'];
+function scanPort(host, port, timeout = 3000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const socket = new net.Socket();
+    let done = false;
 
-async function queryDoH(resolver, name, type) {
-  const url = `${resolver.url}?name=${encodeURIComponent(name)}&type=${type}`;
-  try {
-    const r = await fetch(url, {
-      headers: { 'Accept': 'application/dns-json' },
-      signal: AbortSignal.timeout(5000)
-    });
-    if (!r.ok) return { error: `HTTP ${r.status}` };
-    const data = await r.json();
-    return {
-      status: data.Status,
-      answer: (data.Answer || []).map(a => ({
-        name: a.name, type: a.type, ttl: a.TTL,
-        data: a.data
-      })),
-      authority: (data.Authority || []).map(a => ({
-        name: a.name, type: a.type, ttl: a.TTL, data: a.data
-      }))
+    const finish = (status) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve({ port, status, ms: Date.now() - start });
     };
-  } catch (e) {
-    return { error: e.message };
-  }
+
+    socket.setTimeout(timeout);
+    socket.once('connect', () => finish('open'));
+    socket.once('timeout', () => finish('timeout'));
+    socket.once('error', (e) => {
+      if (e.code === 'ECONNREFUSED') finish('closed');
+      else if (e.code === 'EHOSTUNREACH') finish('unreachable');
+      else finish('filtered');
+    });
+
+    try { socket.connect(port, host); }
+    catch { finish('error'); }
+  });
 }
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  const { host, type = 'A' } = req.query;
+  const { host, ports } = req.query;
   if (!host) return res.status(400).json({ error: 'Missing host' });
 
-  const typeUpper = type.toUpperCase();
-  if (!RECORD_TYPES.includes(typeUpper)) {
-    return res.status(400).json({ error: 'Invalid type', allowed: RECORD_TYPES });
+  const cleanHost = host.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+
+  let portList = COMMON_PORTS;
+  if (ports) {
+    portList = ports.split(',').map(p => parseInt(p.trim())).filter(p => p > 0 && p < 65536).slice(0, 50);
   }
 
-  const results = await Promise.all(
-    RESOLVERS.map(async (r) => ({
-      resolver: r.name, label: r.label,
-      ...(await queryDoH(r, host, typeUpper))
-    }))
-  );
+  const startedAt = Date.now();
+
+  // Batch to avoid socket exhaustion
+  const BATCH = 10;
+  const results = [];
+  for (let i = 0; i < portList.length; i += BATCH) {
+    const batch = portList.slice(i, i + BATCH);
+    const batchResults = await Promise.all(batch.map(p => scanPort(cleanHost, p)));
+    results.push(...batchResults);
+  }
+
+  const open = results.filter(r => r.status === 'open');
+  const closed = results.filter(r => r.status === 'closed');
+  const filtered = results.filter(r => r.status === 'filtered' || r.status === 'timeout');
 
   return res.json({
-    host, type: typeUpper,
-    queriedAt: new Date().toISOString(),
-    resolvers: results
+    host: cleanHost,
+    scannedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAt,
+    totalScanned: results.length,
+    summary: {
+      open: open.length,
+      closed: closed.length,
+      filtered: filtered.length
+    },
+    openPorts: open.sort((a, b) => a.port - b.port),
+    results: results.sort((a, b) => a.port - b.port)
   });
 }
