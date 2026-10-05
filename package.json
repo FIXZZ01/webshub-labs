@@ -1,6 +1,6 @@
 {
   "name": "webshub-labs",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "description": "WebsHub Labs — Premium global network intelligence platform",
   "scripts": {
@@ -10,8 +10,10 @@
   "dependencies": {
     "socks": "^2.8.3",
     "socks-proxy-agent": "^8.0.4",
-    "https-proxy-agent": "^7.0.5",
-    "node-fetch": "^3.3.2"
+    "https-proxy-agent": "^7.0.5"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": "24.x"
+  },
+  "type": "module"
 }
