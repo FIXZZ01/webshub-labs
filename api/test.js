@@ -6,11 +6,8 @@
 import net from 'node:net';
 import tls from 'node:tls';
 import { SocksClient } from 'socks';
-import { SocksProxyAgent } from 'socks-proxy-agent';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import fetch from 'node-fetch';
 
-export const config = { maxDuration: 60, memory: 1024 };
+export const config = { maxDuration: 30, memory: 1024 };
 
 /* ═══════════ STATUS CLASSIFICATION ENGINE ═══════════ */
 const STATUS_MAP = {
