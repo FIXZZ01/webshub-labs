@@ -5,7 +5,7 @@
 
 import net from 'node:net';
 
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 30 };
 
 function pingTTL(host, ttl, timeout = 2000) {
   return new Promise((resolve) => {
